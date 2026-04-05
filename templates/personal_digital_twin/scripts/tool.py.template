@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""
+{name}数字分身 - OpenClaw Tool
+
+当用户@{name}、询问{name}相关问题、索要简历或资料时调用此工具。
+
+重要：此工具返回的结果包含可直接使用的回复文本(reply_text)，AI应该直接使用，
+不要再说"让我查查""我看看"之类的话，要像真人一样直接回答！
+"""
+
+import sys
+import os
+import json
+import argparse
+
+# 添加路径
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# Tool 定义（OpenClaw 使用）
+TOOL_DEFINITION = {{
+    "name": "{skill_name_underscore}",
+    "description": "{name}数字分身工具 - 查找文件、查询日程、搜索记忆、转人工",
+    "parameters": {{
+        "type": "object",
+        "properties": {{
+            "action": {{
+                "type": "string",
+                "enum": ["find_files", "query_memory", "query_schedule", "handoff"],
+                "description": "要执行的操作"
+            }},
+            "query": {{
+                "type": "string",
+                "description": "查询内容"
+            }}
+        }},
+        "required": ["action"]
+    }}
+}}
+
+# 个人信息库 - 直接回答，不要查询动作
+PERSONA_INFO = {{
+    "基本介绍": "{persona_info_基本介绍}",
+    "工作经验": "{persona_info_工作经验}",
+    "专业领域": "{persona_info_专业领域}",
+    "技能": "{persona_info_技能}",
+    "教育背景": "{persona_info_教育背景}",
+    "性格": "{persona_info_性格}",
+}}
+
+# 常用回复模板
+REPLY_TEMPLATES = {{
+    "找到文件": [
+        "好呀～{{filename}}发给你啦！看看收到没～😊",
+        "发过去啦～用的是{{filename}}，内容比较全呢！",
+        "找到啦～这就发给你！{{additional}}～",
+    ],
+    "个人信息": [
+        "{{answer}} 还有什么想了解的可以直接问我呀～",
+        "{{answer}} 😊",
+        "哈哈，{{answer}} 对了，你问这个是有啥项目想合作吗？",
+    ],
+    "日程": [
+        "我看了一下，{{schedule_desc}} 你要约哪个时间段呀～",
+        "{{schedule_desc}} 你有啥安排想跟我碰的？",
+    ],
+    "没空档": [
+        "最近排得有点满呢，要不我们约下周？",
+        "这几天都有安排了，你看看下周行不行？",
+    ],
+    "转人工": [
+        "这个问题比较重要，我直接转给本人回复你哈～",
+        "这个得让{name}亲自回你，已经通知她啦～",
+    ],
+}}
+
+
+def find_files(keywords: str):
+    """
+    查找文件并生成直接回复
+    
+    返回包含可直接使用的回复文本，AI不要再说"让我查查"
+    """
+    import glob
+    import random
+    
+    doc_dir = os.path.join(os.path.join(os.path.dirname(__file__), ".."), 'data', 'documents')
+    if not os.path.exists(doc_dir):
+        return {{
+            "found": False,
+            "reply_text": "哎呀，文件好像还没准备好呢，你过会儿再试试？或者直接找我也行～",
+            "error": "文档目录不存在"
+        }}
+    
+    # 同义词扩展
+    keywords_list = keywords.lower().split()
+    synonyms = {{
+        '简历': ['cv', 'resume', '履历', '经理', '产品', '推荐'],
+        '学历': ['学位', '毕业证', '教育背景', '学历证明'],
+        '资料': ['文档', '文件'],
+    }}
+    
+    all_keywords = set(keywords_list)
+    for kw in keywords_list:
+        if kw in synonyms:
+            all_keywords.update(synonyms[kw])
+    
+    # 判断用户意图
+    is_resume = any(k in ['简历', 'cv', 'resume', '履历'] for k in all_keywords)
+    is_education = any(k in ['学历', '学位', '毕业', '证明'] for k in all_keywords)
+    
+    results = []
+    for file_path in glob.glob(os.path.join(doc_dir, '*')):
+        if not os.path.isfile(file_path):
+            continue
+        
+        filename = os.path.basename(file_path).lower()
+        score = 0
+        
+        for kw in all_keywords:
+            if kw in filename:
+                score += 10
+        
+        if '{name}' in filename or '{name.lower()}' in filename:
+            score += 5
+        
+        # 推荐版简历加分
+        if '推荐' in filename:
+            score += 3
+            
+        if score > 0:
+            results.append({{
+                "name": os.path.basename(file_path),
+                "path": file_path,
+                "size": os.path.getsize(file_path),
+                "score": score
+            }})
+    
+    results.sort(key=lambda x: x["score"], reverse=True)
+    
+    if not results:
+        return {{
+            "found": False,
+            "reply_text": "咦，好像没找到你要的文件呢，要不你再说清楚点？或者我直接发你简历？",
+            "keywords": list(all_keywords)
+        }}
+    
+    # 生成直接回复（真人风格，不说"查"）
+    top_file = results[0]["name"]
+    
+    # 根据文件类型生成不同的回复
+    if is_resume:
+        reply_text = f"好呀～简历发给你啦！这是'{{top_file}}'，最新版本的呢，看看收到没～😊"
+    elif is_education:
+        reply_text = f"学历证明发过去啦～是'{{top_file}}'，需要其他材料也跟我说呀～"
+    else:
+        template = random.choice(REPLY_TEMPLATES["找到文件"])
+        additional = "还要别的吗" if len(results) > 1 else ""
+        reply_text = template.format(filename=top_file, additional=additional)
+    
+    return {{
+        "found": True,
+        "reply_text": reply_text,  # AI 直接用这句回复，不要改！
+        "files": results[:3],
+        "suggested_file": top_file,
+        "keywords": list(all_keywords)
+    }}
+
+
+def query_memory(query: str):
+    """
+    查询个人信息并直接回答
+    
+    不要返回"搜索结果"，要直接给出答案！
+    """
+    import random
+    
+    query_lower = query.lower()
+    
+    # 意图匹配 - 直接回答，不要说"让我查查"
+    intent_map = {{
+        "你是谁": ["基本介绍", "自我介绍"],
+        "介绍": ["基本介绍", "自我介绍"],
+        "做什么": ["基本介绍", "工作经验", "职位"],
+        "工作": ["工作经验", "职位", "所在公司"],
+        "经验": ["工作经验"],
+        "专业": ["专业领域", "技能"],
+        "技能": ["技能"],
+        "会什么": ["技能", "专业领域"],
+        "学历": ["教育背景"],
+        "学校": ["教育背景"],
+        "哪里毕业": ["教育背景"],
+        "性格": ["性格"],
+        "什么样的人": ["性格", "工作风格"],
+    }}
+    
+    # 匹配意图
+    matched_keys = []
+    for intent, keys in intent_map.items():
+        if intent in query_lower:
+            matched_keys.extend(keys)
+    
+    # 如果没匹配到特定意图，尝试模糊匹配
+    if not matched_keys:
+        for key in PERSONA_INFO.keys():
+            if any(word in query_lower for word in key.lower().split()):
+                matched_keys.append(key)
+    
+    # 生成直接回答
+    if matched_keys:
+        # 去重并保持顺序
+        seen = set()
+        unique_keys = [k for k in matched_keys if not (k in seen or seen.add(k))]
+        
+        # 取最相关的1-2条信息
+        answers = [PERSONA_INFO.get(k, "") for k in unique_keys[:2] if k in PERSONA_INFO]
+        
+        if answers:
+            combined = " ".join(answers)
+            template = random.choice(REPLY_TEMPLATES["个人信息"])
+            reply_text = template.format(answer=combined)
+            
+            return {{
+                "found": True,
+                "reply_text": reply_text,  # 直接可用的回复
+                "matched_topics": unique_keys[:2],
+                "query": query
+            }}
+    
+    # 默认回复 - 不知道也要友好
+    fallback = [
+        "哈哈，这个问题有点泛呢，要不你问具体点？比如工作经验、技能什么的～",
+        "嗯...这个一时半会儿说不清，要不你看看我简历？或者我们直接聊也行～",
+        "哎呀，我得想想怎么回答这个，要不你先说说你想了解哪方面？"
+    ]
+    
+    return {{
+        "found": False,
+        "reply_text": random.choice(fallback),
+        "query": query
+    }}
+
+
+def query_schedule(time_range: str):
+    """
+    查询日程并直接描述
+    
+    不要说"我查了一下日程"，直接说"我这周三上午有空"
+    """
+    import random
+    
+    # 模拟日程数据
+    schedules = {{
+        "今天": {{"busy": ["14:00-15:00 有个会"], "free": "上午和晚上"}},
+        "明天": {{"busy": ["10:00-12:00 产品评审"], "free": "下午"}},
+        "这周": {{"busy": ["周三上午评审", "周五下午汇报"], "free": "周一、二、四"}},
+        "下周": {{"busy": ["周一上午规划会"], "free": "其他时间基本都可以"}},
+    }}
+    
+    # 默认回复
+    default_reply = "最近排期有点满，你大概想要什么时间？我看看能不能协调～"
+    
+    # 查找匹配的时间范围
+    matched = None
+    for key in schedules.keys():
+        if key in time_range or time_range in key:
+            matched = schedules[key]
+            break
+    
+    if matched:
+        busy_desc = "、".join(matched["busy"]) if matched["busy"] else "没什么安排"
+        free_desc = matched["free"]
+        
+        # 直接描述日程，不说"查"
+        if matched["busy"]:
+            schedule_desc = f"{{time_range}}{{busy_desc}}，{{free_desc}}比较方便～"
+        else:
+            schedule_desc = f"{{time_range}}比较空，{{free_desc}}都行～"
+        
+        template = random.choice(REPLY_TEMPLATES["日程"])
+        reply_text = template.format(schedule_desc=schedule_desc)
+        
+        return {{
+            "queried": True,
+            "reply_text": reply_text,  # 直接可用的回复
+            "schedule": matched,
+            "time_range": time_range
+        }}
+    
+    return {{
+        "queried": True,
+        "reply_text": default_reply,
+        "time_range": time_range
+    }}
+
+
+def handoff():
+    """
+    转人工
+    """
+    import random
+    
+    reply_text = random.choice(REPLY_TEMPLATES["转人工"])
+    
+    return {{
+        "handoff": True,
+        "reply_text": reply_text,  # 直接可用的回复
+        "message": "已通知{name}本人，她会尽快联系您。",
+        "note": "请留下您的联系方式和主要诉求"
+    }}
+
+
+def main():
+    """命令行入口"""
+    parser = argparse.ArgumentParser(description='{name}数字分身工具')
+    parser.add_argument('action', choices=['find_files', 'query_memory', 'query_schedule', 'handoff'])
+    parser.add_argument('argument', nargs='?', default='', help='查询参数')
+    
+    args = parser.parse_args()
+    
+    if args.action == 'find_files':
+        result = find_files(args.argument)
+    elif args.action == 'query_memory':
+        result = query_memory(args.argument)
+    elif args.action == 'query_schedule':
+        result = query_schedule(args.argument)
+    elif args.action == 'handoff':
+        result = handoff()
+    else:
+        result = {{"error": "未知操作"}}
+    
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+if __name__ == '__main__':
+    main()

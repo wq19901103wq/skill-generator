@@ -2,13 +2,20 @@
 """
 OpenClaw Skill Generator
 通用 Skill 生成器 - 支持多种 Skill 模板
+支持从文件自动提取个人信息（简历、聊天记录等）
 
 用法:
-    # 生成分身 Skill
+    # 方式1: 基础生成（需要手动配置）
     python3 skill_generator.py --template personal_digital_twin --name "张三" --output ./skills
     
-    # 使用配置文件
+    # 方式2: 从文件自动提取（推荐）⭐
+    python3 skill_generator.py --from-files 简历.pdf 聊天记录.txt --name "张三" --output ./skills
+    
+    # 方式3: 使用配置文件
     python3 skill_generator.py --config config.json
+    
+    # 方式4: 混合方式（文件提取 + 手动覆盖）
+    python3 skill_generator.py --from-files 简历.pdf --config override.json
 """
 
 import argparse
@@ -18,6 +25,9 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+
+# 导入提取器
+from extractors import FileParser, PersonaExtractor, ChatParser
 
 
 class SkillGenerator:
@@ -50,6 +60,89 @@ class SkillGenerator:
         manifest['_template_path'] = str(template_path)
         return manifest
     
+    def extract_from_files(self, file_paths: List[str], name_hint: str = None) -> Dict[str, Any]:
+        """
+        从文件中提取个人信息
+        
+        Args:
+            file_paths: 文件路径列表（简历、聊天记录等）
+            name_hint: 姓名提示
+        
+        Returns:
+            提取的配置字典
+        """
+        print("🔍 正在分析文件...")
+        
+        file_parser = FileParser()
+        persona_extractor = PersonaExtractor()
+        
+        # 解析所有文件
+        file_contents = {}
+        for file_path in file_paths:
+            path = Path(file_path)
+            if not path.exists():
+                print(f"  ⚠️ 文件不存在: {file_path}")
+                continue
+            
+            print(f"  📄 {path.name}")
+            
+            try:
+                result = file_parser.parse(path)
+                file_contents[path.name] = result['content']
+            except Exception as e:
+                print(f"  ❌ 解析失败: {e}")
+        
+        if not file_contents:
+            raise ValueError("没有成功解析任何文件")
+        
+        print(f"\n🧠 正在提取个人信息...")
+        
+        # 提取个人信息
+        persona = persona_extractor.extract_from_multiple(file_contents)
+        
+        # 处理聊天记录（如果有）
+        chat_profile = None
+        for filename, content in file_contents.items():
+            if 'chat' in filename.lower() or '聊天' in filename or '对话' in filename:
+                print(f"  💬 检测到聊天记录: {filename}")
+                chat_parser = ChatParser()
+                chat_parser.parse(content)
+                
+                # 识别目标用户
+                target = chat_parser.identify_target_user(hint=name_hint)
+                if target:
+                    print(f"  👤 识别到用户: {target}")
+                    chat_profile = chat_parser.extract_user_profile(target)
+                break
+        
+        # 构建配置
+        config = {
+            'name': persona_extractor.persona.name or name_hint or "用户",
+            'title': persona_extractor.persona.title or "",
+            'company': persona_extractor.persona.company or "",
+            'basic_intro': persona_extractor.persona.basic_intro or "",
+            'work_experience': persona_extractor.persona.work_experience or "",
+            'education': persona_extractor.persona.education or "",
+            'skills': persona_extractor.persona.skills or "",
+            'personality': persona_extractor.persona.personality or "",
+            'interests': persona_extractor.persona.interests or "",
+            'contact': persona_extractor.persona.contact or "",
+        }
+        
+        # 添加聊天分析结果
+        if chat_profile:
+            config['chat_profile'] = chat_profile
+            config['tone_style'] = chat_profile.get('reply_style', '说话自然')
+            config['common_phrases'] = chat_profile.get('common_phrases', [])
+        
+        print(f"\n✅ 提取完成！")
+        print(f"   姓名: {config['name']}")
+        print(f"   职位: {config['title'] or '未识别'}")
+        print(f"   公司: {config['company'] or '未识别'}")
+        print(f"   教育: {config['education'][:30] + '...' if len(config['education']) > 30 else config['education'] or '未识别'}")
+        
+        return config
+    
     def generate(self, template_name: str, config: Dict[str, Any], output_dir: str = None) -> str:
         """
         生成 Skill
@@ -72,7 +165,19 @@ class SkillGenerator:
         self._validate_config(template, final_config)
         
         # 确定输出路径
-        skill_name = final_config.get('skill_name', f"{final_config.get('name', 'skill')}-digital-twin")
+        name = final_config.get('name', 'skill')
+        skill_name = final_config.get('skill_name')
+        
+        if not skill_name:
+            # 生成 skill_name：如果是中文，使用 pinyin 风格；否则使用原名
+            import re
+            if re.search(r'[\u4e00-\u9fa5]', name):
+                # 中文名，尝试转换为拼音风格
+                skill_name = self._name_to_pinyin_slug(name)
+            else:
+                skill_name = f"{name.lower().replace(' ', '-')}-digital-twin"
+        
+        final_config['skill_name'] = skill_name
         output_path = Path(output_dir) if output_dir else self.output_dir
         skill_path = output_path / skill_name
         
@@ -84,6 +189,9 @@ class SkillGenerator:
         
         # 复制静态文件
         self._copy_static_files(skill_path, template)
+        
+        # 复制源文件到 data/documents（用于参考）
+        self._copy_source_files(skill_path, config.get('_source_files', []))
         
         return str(skill_path)
     
@@ -144,13 +252,27 @@ class SkillGenerator:
     def _copy_static_files(self, skill_path: Path, template: Dict):
         """复制静态文件"""
         template_path = Path(template['_template_path'])
-        static_files = template.get('static_files', [])
+        static_files = template.get('static_files', {})
         
         for src, dest in static_files.items():
             src_path = template_path / src
             dest_path = skill_path / dest
             if src_path.exists():
                 shutil.copy2(src_path, dest_path)
+    
+    def _copy_source_files(self, skill_path: Path, source_files: List[str]):
+        """复制源文件到 data/documents"""
+        if not source_files:
+            return
+        
+        doc_dir = skill_path / "data" / "documents"
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        
+        for file_path in source_files:
+            path = Path(file_path)
+            if path.exists():
+                dest = doc_dir / path.name
+                shutil.copy2(path, dest)
     
     def _prepare_render_vars(self, config: Dict) -> Dict:
         """准备渲染变量"""
@@ -177,8 +299,149 @@ class SkillGenerator:
         if 'reply_examples' in vars_dict:
             vars_dict['reply_examples_str'] = '\n'.join(f'   - "{ex}"' for ex in vars_dict['reply_examples'])
         
+        # 处理源文件列表显示
+        source_files = config.get('_source_files', [])
+        vars_dict['_source_files_display'] = ', '.join(source_files) if source_files else '手动配置'
+        
+        # 生成 PERSONA_INFO Python 代码
+        vars_dict['persona_info_py'] = self._generate_persona_info_py(config)
+        
+        # 生成 REPLY_TEMPLATES
+        vars_dict['reply_templates_py'] = self._generate_reply_templates_py(config)
+        
         return vars_dict
     
+    def _generate_persona_info_py(self, config: Dict) -> str:
+        """生成 PERSONA_INFO Python 字典代码"""
+        persona_items = []
+        
+        # 基本信息
+        name = config.get('name', '用户')
+        title = config.get('title', '')
+        
+        basic_intro = config.get('basic_intro', '')
+        if not basic_intro and name:
+            basic_intro = f"我是{name}"
+            if title:
+                basic_intro += f"，{title}"
+            basic_intro += "。"
+        
+        if basic_intro:
+            persona_items.append(f'    "基本介绍": "{basic_intro}"')
+        
+        if config.get('work_experience'):
+            persona_items.append(f'    "工作经验": "{config["work_experience"]}"')
+        
+        if config.get('education'):
+            persona_items.append(f'    "教育背景": "{config["education"]}"')
+        
+        if config.get('skills'):
+            persona_items.append(f'    "技能": "{config["skills"]}"')
+        
+        if config.get('company'):
+            persona_items.append(f'    "所在公司": "{config["company"]}"')
+        
+        if config.get('title'):
+            persona_items.append(f'    "职位": "{config["title"]}"')
+        
+        if config.get('personality'):
+            persona_items.append(f'    "性格": "{config["personality"]}"')
+        
+        if config.get('interests'):
+            persona_items.append(f'    "兴趣爱好": "{config["interests"]}"')
+        
+        if config.get('contact'):
+            persona_items.append(f'    "联系方式": "{config["contact"]}"')
+        
+        # 如果没有提取到任何信息，添加默认值
+        if not persona_items:
+            persona_items = [
+                f'    "基本介绍": "我是{name}。"',
+            ]
+        
+        return ',\n'.join(persona_items)
+    
+    def _generate_reply_templates_py(self, config: Dict) -> str:
+        """生成 REPLY_TEMPLATES Python 代码"""
+        templates = []
+        name = config.get('name', '')
+        
+        # 个人信息回复
+        if config.get('tone_style'):
+            # 有聊天记录分析，使用学习到的风格
+            templates.append('    "个人信息": [')
+            templates.append(f'        "{{answer}} 还有啥想了解的可以直接问我～",')
+            templates.append(f'        "{{answer}} 😊",')
+            templates.append('    ],')
+        else:
+            templates.append('    "个人信息": [')
+            templates.append(f'        "{{answer}} 还有什么想了解的可以直接问我呀～",')
+            templates.append(f'        "{{answer}} 😊",')
+            templates.append('    ],')
+        
+        # 其他模板
+        templates.append('    "找到文件": [')
+        templates.append('        "好呀～{filename}发给你啦！看看收到没～😊",')
+        templates.append('        "发过去啦～用的是{filename}，内容比较全呢！",')
+        templates.append('    ],')
+        
+        templates.append('    "日程": [')
+        templates.append('        "我看了一下，{schedule_desc} 你要约哪个时间段呀～",')
+        templates.append('        "{schedule_desc} 你有啥安排想跟我碰的？",')
+        templates.append('    ],')
+        
+        templates.append('    "转人工": [')
+        templates.append(f'        "这个问题比较重要，我直接转给{name}本人回复你哈～",')
+        templates.append(f'        "这个得让{name}亲自回你，已经通知她/他啦～",')
+        templates.append('    ],')
+        
+        return '\n'.join(templates)
+    
+    def _name_to_pinyin_slug(self, name: str) -> str:
+        """将中文名转换为拼音风格的 slug"""
+        # 常见姓氏映射
+        surname_map = {
+            '王': 'wang', '李': 'li', '张': 'zhang', '刘': 'liu', '陈': 'chen',
+            '杨': 'yang', '黄': 'huang', '赵': 'zhao', '吴': 'wu', '周': 'zhou',
+            '徐': 'xu', '孙': 'sun', '马': 'ma', '朱': 'zhu', '胡': 'hu',
+            '郭': 'guo', '林': 'lin', '何': 'he', '高': 'gao', '罗': 'luo',
+            '郑': 'zheng', '梁': 'liang', '谢': 'xie', '宋': 'song', '唐': 'tang',
+            '许': 'xu', '韩': 'han', '冯': 'feng', '邓': 'deng', '曹': 'cao',
+            '彭': 'peng', '曾': 'zeng', '肖': 'xiao', '田': 'tian', '董': 'dong',
+            '潘': 'pan', '袁': 'yuan', '蔡': 'cai', '蒋': 'jiang', '余': 'yu',
+            '于': 'yu', '杜': 'du', '叶': 'ye', '程': 'cheng', '魏': 'wei',
+            '苏': 'su', '吕': 'lv', '丁': 'ding', '任': 'ren', '沈': 'shen',
+            '姚': 'yao', '卢': 'lu', '姜': 'jiang', '崔': 'cui', '钟': 'zhong',
+            '谭': 'tan', '陆': 'lu', '汪': 'wang', '范': 'fan', '金': 'jin',
+            '石': 'shi', '廖': 'liao', '贾': 'jia', '夏': 'xia', '韦': 'wei',
+            '傅': 'fu', '方': 'fang', '白': 'bai', '邹': 'zou', '孟': 'meng',
+            '熊': 'xiong', '秦': 'qin', '邱': 'qiu', '江': 'jiang', '尹': 'yin',
+            '薛': 'xue', '闫': 'yan', '段': 'duan', '雷': 'lei', '侯': 'hou',
+            '龙': 'long', '史': 'shi', '黎': 'li', '贺': 'he', '顾': 'gu',
+            '毛': 'mao', '郝': 'hao', '龚': 'gong', '邵': 'shao', '万': 'wan',
+            '钱': 'qian', '严': 'yan', '覃': 'qin', '武': 'wu', '戴': 'dai',
+            '莫': 'mo', '孔': 'kong', '向': 'xiang', '汤': 'tang',
+        }
+        
+        # 尝试匹配姓氏
+        for cn, py in surname_map.items():
+            if name.startswith(cn):
+                # 剩余部分直接转小写（简化处理）
+                remainder = name[len(cn):]
+                # 使用 unicode 编码作为备选
+                import hashlib
+                if remainder:
+                    # 取剩余部分的前两个字符的 hash
+                    short_hash = hashlib.md5(remainder.encode()).hexdigest()[:6]
+                    return f"{py}-{short_hash}-digital-twin"
+                else:
+                    return f"{py}-digital-twin"
+        
+        # 无法识别的中文名，使用 hash
+        import hashlib
+        name_hash = hashlib.md5(name.encode()).hexdigest()[:8]
+        return f"persona-{name_hash}-digital-twin"
+
     def _render_string(self, template: str, vars_dict: Dict) -> str:
         """渲染字符串模板"""
         result = template
@@ -186,17 +449,43 @@ class SkillGenerator:
             placeholder = '{' + key + '}'
             if placeholder in result:
                 result = result.replace(placeholder, str(value))
+        
+        # 将 {{ 和 }} 转换为单个大括号（这些是 Python 代码中的字面量）
+        result = result.replace('{{', '{').replace('}}', '}')
+        
         return result
 
 
 def main():
-    parser = argparse.ArgumentParser(description='OpenClaw Skill Generator')
-    parser.add_argument('--template', '-t', help='模板名称')
+    parser = argparse.ArgumentParser(
+        description='OpenClaw Skill Generator - 从文件自动提取个人信息生成数字分身',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 从简历自动生成
+  python3 skill_generator.py --from-files 简历.pdf --name "王艺涵"
+  
+  # 从多个文件生成
+  python3 skill_generator.py --from-files 简历.docx 微信聊天记录.txt --name "王艺涵"
+  
+  # 基础生成（手动配置）
+  python3 skill_generator.py --template personal_digital_twin --name "张三"
+        """
+    )
+    
+    parser.add_argument('--template', '-t', default='personal_digital_twin',
+                       help='模板名称（默认: personal_digital_twin）')
     parser.add_argument('--name', '-n', help='分身名称（如：王艺涵）')
     parser.add_argument('--skill-name', '-s', help='Skill 目录名')
-    parser.add_argument('--output', '-o', default='./skills', help='输出目录')
-    parser.add_argument('--config', '-c', help='配置文件路径')
+    parser.add_argument('--output', '-o', default='./skills', help='输出目录（默认: ./skills）')
+    parser.add_argument('--config', '-c', help='配置文件路径（JSON格式）')
     parser.add_argument('--list', '-l', action='store_true', help='列出可用模板')
+    
+    # 文件提取相关参数
+    parser.add_argument('--from-files', '-f', nargs='+', metavar='FILE',
+                       help='从文件自动提取信息（支持: pdf, docx, txt, md, json, csv）')
+    parser.add_argument('--chat-files', nargs='+', metavar='FILE',
+                       help='指定聊天记录文件（用于分析说话风格）')
     
     args = parser.parse_args()
     
@@ -210,26 +499,67 @@ def main():
             print(f"  - {t}")
         return
     
-    # 加载配置
+    # 收集源文件
+    source_files = []
+    if args.from_files:
+        source_files.extend(args.from_files)
+    if args.chat_files:
+        source_files.extend(args.chat_files)
+    
+    # 确定配置
+    config = {}
+    template_name = args.template
+    
+    # 方式1: 从文件提取
+    if source_files:
+        if not args.name:
+            print("❌ 使用 --from-files 时需要提供 --name 作为姓名提示")
+            return 1
+        
+        try:
+            extracted_config = generator.extract_from_files(source_files, name_hint=args.name)
+            config.update(extracted_config)
+            config['_source_files'] = source_files
+        except Exception as e:
+            print(f"❌ 文件提取失败: {e}")
+            return 1
+    
+    # 方式2: 加载配置文件
     if args.config:
-        with open(args.config, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        template_name = config.get('template')
-    else:
-        if not args.template or not args.name:
-            parser.error("需要提供 --template 和 --name，或使用 --config")
-        template_name = args.template
-        config = {
-            'name': args.name,
-            'skill_name': args.skill_name or f"{args.name.lower().replace(' ', '-')}-digital-twin"
-        }
+        try:
+            with open(args.config, 'r', encoding='utf-8') as f:
+                file_config = json.load(f)
+            
+            # 配置文件优先级高于提取的配置
+            config.update(file_config)
+            template_name = file_config.get('template', template_name)
+        except Exception as e:
+            print(f"❌ 配置文件加载失败: {e}")
+            return 1
+    
+    # 方式3: 命令行参数
+    if args.name:
+        config['name'] = args.name
+    if args.skill_name:
+        config['skill_name'] = args.skill_name
+    
+    # 验证
+    if not config.get('name'):
+        parser.error("需要提供 --name 或使用 --config 指定配置文件")
     
     # 生成
     try:
         skill_path = generator.generate(template_name, config, args.output)
-        print(f"✅ Skill 生成成功: {skill_path}")
+        print(f"\n✅ Skill 生成成功!")
+        print(f"   路径: {skill_path}")
+        print(f"\n使用方式:")
+        print(f"   1. 将 {skill_path} 复制到 OpenClaw skills 目录")
+        print(f"   2. 重启 OpenClaw 服务")
+        print(f"   3. 在聊天中 @{config['name']} 测试")
     except Exception as e:
-        print(f"❌ 生成失败: {e}")
+        print(f"\n❌ 生成失败: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
     
     return 0

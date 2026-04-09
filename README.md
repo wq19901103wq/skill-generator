@@ -25,9 +25,38 @@ pip install PyPDF2 python-docx
 
 ## 用法
 
-### 🌟 推荐：从文件自动提取（全新功能！）
+### 🚀 智能模式：任意资料生成 Skill（全新！）
 
-只需提供简历或聊天记录，自动生成数字分身：
+使用 LLM 智能分析任意类型的资料，自动识别并生成对应的 Skill：
+
+```bash
+# 设置 LLM API 密钥（必需）
+export OPENAI_API_KEY="your-api-key"
+
+# 智能模式：自动识别资料类型
+python3 skill_generator.py --smart --from-files 资料.pdf --name "助手名"
+
+# 从产品手册生成产品助手
+python3 skill_generator.py --smart --from-files 产品手册.docx --name "产品小助手"
+
+# 从技术文档生成技术助手
+python3 skill_generator.py --smart --from-files API文档.md --name "技术助手"
+
+# 从 FAQ 生成问答助手
+python3 skill_generator.py --smart --from-files 常见问题.xlsx --name "客服助手"
+```
+
+**智能模式自动识别的资料类型**：
+- 📄 简历/个人介绍 → 数字分身
+- 📦 产品文档/手册 → 产品助手
+- 🔧 技术文档/API → 技术助手
+- 💬 聊天记录 → 聊天风格分析
+- ❓ FAQ/问答 → 问答助手
+- 📚 通用知识 → 知识助手
+
+### 传统方式：从文件提取（仅简历类）
+
+如果不使用 `--smart`，则使用传统的规则提取（仅支持简历类资料）：
 
 ```bash
 # 从简历生成
@@ -38,12 +67,6 @@ python3 skill_generator.py \
   --from-files 简历.docx 微信聊天记录.txt \
   --name "王艺涵" \
   --output ./skills
-
-# 从聊天记录学习说话风格
-python3 skill_generator.py \
-  --from-files 简历.pdf \
-  --chat-files 聊天记录.txt \
-  --name "王艺涵"
 ```
 
 **支持的文件格式**:

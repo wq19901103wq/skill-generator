@@ -27,7 +27,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 # 导入提取器
-from extractors import FileParser, PersonaExtractor, ChatParser
+from extractors import (
+    FileParser, PersonaExtractor, ChatParser,
+    UniversalExtractor, LLMBackend, extract_with_llm
+)
 
 
 class SkillGenerator:
@@ -140,6 +143,92 @@ class SkillGenerator:
         print(f"   职位: {config['title'] or '未识别'}")
         print(f"   公司: {config['company'] or '未识别'}")
         print(f"   教育: {config['education'][:30] + '...' if len(config['education']) > 30 else config['education'] or '未识别'}")
+        
+        return config
+    
+    def extract_from_files_with_llm(
+        self, 
+        file_paths: List[str], 
+        hint: str = None,
+        llm_provider: str = "openai"
+    ) -> Dict[str, Any]:
+        """
+        使用 LLM 从文件中智能提取信息（支持任意资料类型）
+        
+        Args:
+            file_paths: 文件路径列表（任意类型资料）
+            hint: 用户提示，帮助 LLM 理解资料类型
+            llm_provider: LLM 提供商 (openai, anthropic)
+        
+        Returns:
+            提取的配置字典
+        """
+        print("🔍 正在使用 LLM 分析文件...")
+        
+        # 检查 LLM 配置
+        if not os.getenv("OPENAI_API_KEY") and not os.getenv("ANTHROPIC_API_KEY"):
+            print("⚠️ 警告: 未配置 LLM API 密钥")
+            print("   请设置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY")
+            print("   将使用规则提取作为后备方案...")
+            return self.extract_from_files(file_paths, hint)
+        
+        file_parser = FileParser()
+        
+        # 解析所有文件
+        all_content = []
+        for file_path in file_paths:
+            path = Path(file_path)
+            if not path.exists():
+                print(f"  ⚠️ 文件不存在: {file_path}")
+                continue
+            
+            print(f"  📄 {path.name}")
+            
+            try:
+                result = file_parser.parse(path)
+                all_content.append(f"## {path.name}\n{result['content']}")
+            except Exception as e:
+                print(f"  ❌ 解析失败: {e}")
+        
+        if not all_content:
+            raise ValueError("没有成功解析任何文件")
+        
+        # 合并内容
+        combined_content = "\n\n".join(all_content)
+        
+        print(f"\n🧠 LLM 正在智能分析资料类型...")
+        
+        # 使用 LLM 提取
+        llm = LLMBackend(provider=llm_provider)
+        extractor = UniversalExtractor(llm_backend=llm)
+        extracted = extractor.extract(combined_content, hint)
+        
+        print(f"\n📋 分析结果:")
+        print(f"   资料类型: {extracted.document_type_name}")
+        print(f"   主体名称: {extracted.name or '未识别'}")
+        print(f"   标题/职位: {extracted.title or '未识别'}")
+        print(f"   建议 Skill 类型: {extracted.suggested_skill_type}")
+        
+        # 构建配置
+        config = {
+            'name': extracted.name or hint or "助手",
+            'title': extracted.title or "",
+            'description': extracted.description or "",
+            'document_type': extracted.document_type.value,
+            'key_points': extracted.key_points,
+            'structured_data': extracted.structured_data,
+            'suggested_skill_type': extracted.suggested_skill_type,
+            'suggested_triggers': extracted.suggested_triggers,
+            'persona_info': extracted.persona_info,
+            '_source_files': file_paths,
+            '_extraction_method': 'llm'
+        }
+        
+        # 兼容旧的 PERSONA_INFO 格式
+        if extracted.persona_info:
+            for key, value in extracted.persona_info.items():
+                if key not in config:
+                    config[key] = value
         
         return config
     
@@ -458,18 +547,25 @@ class SkillGenerator:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='OpenClaw Skill Generator - 从文件自动提取个人信息生成数字分身',
+        description='OpenClaw Skill Generator - 智能从任意资料生成 Skill',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 从简历自动生成
+  # 智能模式：自动识别资料类型（推荐）⭐
+  python3 skill_generator.py --smart --from-files 资料.pdf --name "产品名"
+  
+  # 从简历生成
   python3 skill_generator.py --from-files 简历.pdf --name "王艺涵"
   
-  # 从多个文件生成
-  python3 skill_generator.py --from-files 简历.docx 微信聊天记录.txt --name "王艺涵"
+  # 从产品文档生成
+  python3 skill_generator.py --smart --from-files 产品手册.docx --name "产品助手"
   
   # 基础生成（手动配置）
   python3 skill_generator.py --template personal_digital_twin --name "张三"
+
+环境变量:
+  OPENAI_API_KEY      - OpenAI API 密钥（智能模式需要）
+  ANTHROPIC_API_KEY   - Anthropic API 密钥（可选）
         """
     )
     
@@ -486,6 +582,10 @@ def main():
                        help='从文件自动提取信息（支持: pdf, docx, txt, md, json, csv）')
     parser.add_argument('--chat-files', nargs='+', metavar='FILE',
                        help='指定聊天记录文件（用于分析说话风格）')
+    parser.add_argument('--smart', '-S', action='store_true',
+                       help='使用 LLM 智能分析资料类型（自动识别简历、产品文档、技术文档等）')
+    parser.add_argument('--llm-provider', default='openai',
+                       help='LLM 提供商 (openai, anthropic)，默认: openai')
     
     args = parser.parse_args()
     
@@ -512,17 +612,47 @@ def main():
     
     # 方式1: 从文件提取
     if source_files:
-        if not args.name:
-            print("❌ 使用 --from-files 时需要提供 --name 作为姓名提示")
-            return 1
+        # 方式1a: 智能 LLM 提取（推荐，支持任意资料类型）
+        if args.smart:
+            print("🚀 启动智能模式：使用 LLM 分析资料类型...")
+            try:
+                extracted_config = generator.extract_from_files_with_llm(
+                    source_files, 
+                    hint=args.name,
+                    llm_provider=args.llm_provider
+                )
+                config.update(extracted_config)
+                config['_source_files'] = source_files
+                # 根据提取的资料类型自动选择模板
+                if extracted_config.get('suggested_skill_type'):
+                    suggested = extracted_config['suggested_skill_type']
+                    if suggested in generator.list_templates():
+                        template_name = suggested
+                        print(f"   自动选择模板: {template_name}")
+            except Exception as e:
+                print(f"❌ LLM 提取失败: {e}")
+                print("   尝试使用规则提取...")
+                # 后备到规则提取
+                if not args.name:
+                    print("❌ 需要提供 --name 作为提示")
+                    return 1
+                extracted_config = generator.extract_from_files(source_files, name_hint=args.name)
+                config.update(extracted_config)
+                config['_source_files'] = source_files
         
-        try:
-            extracted_config = generator.extract_from_files(source_files, name_hint=args.name)
-            config.update(extracted_config)
-            config['_source_files'] = source_files
-        except Exception as e:
-            print(f"❌ 文件提取失败: {e}")
-            return 1
+        # 方式1b: 传统规则提取（仅支持简历类资料）
+        else:
+            if not args.name:
+                print("❌ 使用 --from-files 时需要提供 --name 作为姓名提示")
+                return 1
+            
+            try:
+                extracted_config = generator.extract_from_files(source_files, name_hint=args.name)
+                config.update(extracted_config)
+                config['_source_files'] = source_files
+            except Exception as e:
+                print(f"❌ 文件提取失败: {e}")
+                return 1
     
     # 方式2: 加载配置文件
     if args.config:

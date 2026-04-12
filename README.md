@@ -2,7 +2,11 @@
 
 通用的 OpenClaw Skill 生成器，支持多种模板，可以快速生成个性化的 Skill。
 
-**🌟 新特性：智能文件提取** — 自动从简历、聊天记录等文件中提取个人信息，无需手动配置！
+**🌟 新特性：Karpathy Style Wiki** — 使用 Markdown 文件作为知识库，无需 RAG，人可编辑！
+
+📚 **[文档中心](./docs/)** | 🚀 [快速开始](#快速开始) | 🔧 [API文档](./docs/API.md) | ❓ [FAQ](./docs/FAQ.md)
+
+---
 
 ## 特性
 
@@ -154,15 +158,41 @@ skill-generator/
 │   ├── __init__.py
 │   ├── file_parser.py           # 多格式文件解析
 │   ├── persona_extractor.py     # 个人信息提取
-│   └── chat_parser.py           # 聊天记录分析
+│   ├── chat_parser.py           # 聊天记录分析
+│   └── universal_extractor.py   # LLM 智能提取
 ├── templates/                   # 模板目录
 │   └── personal_digital_twin/
 │       ├── manifest.json
 │       ├── SKILL.md.template
 │       └── scripts/
 │           └── tool.py.template
+├── docs/                        # 📚 文档中心
+│   ├── README.md               # 文档导航
+│   ├── API.md                  # API 参考
+│   ├── TEMPLATE_GUIDE.md       # 模板开发指南
+│   ├── WIKI_GUIDE.md           # Wiki 使用指南
+│   └── FAQ.md                  # 常见问题
 ├── examples/                    # 示例配置
-└── README.md
+├── README.md                    # 本文件
+├── PROJECT_MAP.md              # 项目架构
+└── PROGRESS.md                 # 进度记录
+```
+
+### 生成的 Skill 结构
+
+```
+xxx-digital-twin/
+├── SKILL.md                     # Skill 定义
+├── scripts/
+│   └── tool.py                 # 工具脚本
+└── data/
+    ├── wiki/                   # ⭐ Karpathy Style 知识库
+    │   ├── _index.md
+    │   ├── 基本介绍.md
+    │   ├── 工作经验.md
+    │   └── ...
+    ├── documents/              # 原始文件
+    └── memory/                 # 对话历史
 ```
 
 ## 完整示例

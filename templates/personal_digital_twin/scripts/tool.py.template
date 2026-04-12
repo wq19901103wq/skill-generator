@@ -6,12 +6,27 @@
 
 重要：此工具返回的结果包含可直接使用的回复文本(reply_text)，AI应该直接使用，
 不要再说"让我查查""我看看"之类的话，要像真人一样直接回答！
+
+## Karpathy Style 知识库
+
+个人信息存储在 data/wiki/*.md 文件中：
+- 基本介绍.md - 基本信息和简介
+- 工作经验.md - 工作经历
+- 教育背景.md - 教育经历
+- 专业技能.md - 技能和专长
+- 性格特点.md - 性格和说话风格
+- 兴趣爱好.md - 个人兴趣
+- 联系方式.md - 联系信息
+
+AI 直接读取这些 Markdown 文件获取信息，无需 RAG。
 """
 
 import sys
 import os
 import json
 import argparse
+import glob
+import random
 
 # 添加路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -37,20 +52,112 @@ TOOL_DEFINITION = {{
     }}
 }}
 
-# 个人信息库 - 从文件自动提取生成
-# 源文件: {_source_files_display}
-PERSONA_INFO = {{
-{persona_info_py}
-}}
 
-# 常用回复模板 - 根据聊天记录分析生成说话风格
-REPLY_TEMPLATES = {{
-{reply_templates_py}
-    "没空档": [
-        "最近排得有点满呢，要不我们约下周？",
-        "这几天都有安排了，你看看下周行不行？",
-    ],
-}}
+def get_skill_dir():
+    """获取 Skill 根目录"""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def get_wiki_dir():
+    """获取 Wiki 知识库目录"""
+    return os.path.join(get_skill_dir(), 'data', 'wiki')
+
+
+def get_wiki_file(filename):
+    """读取 Wiki 文件内容"""
+    wiki_dir = get_wiki_dir()
+    file_path = os.path.join(wiki_dir, filename)
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    return None
+
+
+def get_all_wiki_files():
+    """获取所有 Wiki 文件列表"""
+    wiki_dir = get_wiki_dir()
+    if not os.path.exists(wiki_dir):
+        return {{}}
+    
+    wiki_files = {{}}
+    for file_path in glob.glob(os.path.join(wiki_dir, '*.md')):
+        filename = os.path.basename(file_path)
+        if filename.startswith('_'):  # 跳过索引文件
+            continue
+        with open(file_path, 'r', encoding='utf-8') as f:
+            wiki_files[filename] = f.read()
+    return wiki_files
+
+
+def search_wiki(query: str) -> str:
+    """
+    在 Wiki 知识库中搜索相关信息
+    
+    Args:
+        query: 搜索关键词
+        
+    Returns:
+        找到的相关内容
+    """
+    query_lower = query.lower()
+    wiki_files = get_all_wiki_files()
+    
+    # 意图到文件的映射
+    intent_map = {{
+        '基本介绍': ['基本介绍.md'],
+        '自我介绍': ['基本介绍.md'],
+        '你是谁': ['基本介绍.md'],
+        '做什么': ['基本介绍.md', '工作经验.md'],
+        '工作': ['工作经验.md'],
+        '经验': ['工作经验.md'],
+        '项目': ['工作经验.md'],
+        '学历': ['教育背景.md'],
+        '学校': ['教育背景.md'],
+        '教育': ['教育背景.md'],
+        '毕业': ['教育背景.md'],
+        '专业': ['教育背景.md', '专业技能.md'],
+        '技能': ['专业技能.md'],
+        '会什么': ['专业技能.md'],
+        '能力': ['专业技能.md'],
+        '性格': ['性格特点.md'],
+        '什么样': ['性格特点.md'],
+        '说话': ['性格特点.md'],
+        '风格': ['性格特点.md'],
+        '兴趣': ['兴趣爱好.md'],
+        '爱好': ['兴趣爱好.md'],
+        '喜欢': ['兴趣爱好.md'],
+        '联系': ['联系方式.md'],
+        '电话': ['联系方式.md'],
+        '邮箱': ['联系方式.md'],
+        '微信': ['联系方式.md'],
+    }}
+    
+    # 查找匹配的文件
+    matched_files = set()
+    for intent, files in intent_map.items():
+        if intent in query_lower:
+            matched_files.update(files)
+    
+    # 如果没有匹配到，返回所有文件的前几段
+    if not matched_files:
+        results = []
+        for filename, content in wiki_files.items():
+            # 取前 500 字符
+            preview = content[:500] if len(content) > 500 else content
+            results.append(f"## {{filename.replace('.md', '')}}\\n{{preview}}")
+        return "\\n\\n".join(results[:3]) if results else "暂无相关信息"
+    
+    # 读取匹配的文件内容
+    results = []
+    for filename in matched_files:
+        if filename in wiki_files:
+            content = wiki_files[filename]
+            # 限制长度，避免返回太多内容
+            if len(content) > 1000:
+                content = content[:1000] + "\\n... (更多内容请查看完整文件)"
+            results.append(content)
+    
+    return "\\n\\n".join(results) if results else "暂无相关信息"
 
 
 def find_files(keywords: str):
@@ -59,10 +166,7 @@ def find_files(keywords: str):
     
     返回包含可直接使用的回复文本，AI不要再说"让我查查"
     """
-    import glob
-    import random
-    
-    doc_dir = os.path.join(os.path.join(os.path.dirname(__file__), ".."), 'data', 'documents')
+    doc_dir = os.path.join(get_skill_dir(), 'data', 'documents')
     if not os.path.exists(doc_dir):
         return {{
             "found": False,
@@ -132,9 +236,7 @@ def find_files(keywords: str):
     elif is_education:
         reply_text = f"学历证明发过去啦～是'{{top_file}}'，需要其他材料也跟我说呀～"
     else:
-        template = random.choice(REPLY_TEMPLATES["找到文件"])
-        additional = "还要别的吗" if len(results) > 1 else ""
-        reply_text = template.format(filename=top_file, additional=additional)
+        reply_text = f"发过去啦～用的是'{{top_file}}'，内容比较全呢！"
     
     return {{
         "found": True,
@@ -149,61 +251,35 @@ def query_memory(query: str):
     """
     查询个人信息并直接回答
     
-    不要返回"搜索结果"，要直接给出答案！
+    从 Karpathy Style Wiki 知识库中读取信息，直接回答，不要说"让我查查"
     """
-    import random
+    # 从 Wiki 知识库搜索
+    wiki_content = search_wiki(query)
     
-    query_lower = query.lower()
-    
-    # 意图匹配 - 直接回答，不要说"让我查查"
-    intent_map = {{
-        "你是谁": ["基本介绍", "自我介绍"],
-        "介绍": ["基本介绍", "自我介绍"],
-        "做什么": ["基本介绍", "工作经验", "职位"],
-        "工作": ["工作经验", "职位", "所在公司"],
-        "经验": ["工作经验"],
-        "专业": ["专业领域", "技能"],
-        "技能": ["技能"],
-        "会什么": ["技能", "专业领域"],
-        "学历": ["教育背景"],
-        "学校": ["教育背景"],
-        "哪里毕业": ["教育背景"],
-        "性格": ["性格"],
-        "什么样的人": ["性格", "工作风格"],
-    }}
-    
-    # 匹配意图
-    matched_keys = []
-    for intent, keys in intent_map.items():
-        if intent in query_lower:
-            matched_keys.extend(keys)
-    
-    # 如果没匹配到特定意图，尝试模糊匹配
-    if not matched_keys:
-        for key in PERSONA_INFO.keys():
-            if any(word in query_lower for word in key.lower().split()):
-                matched_keys.append(key)
-    
-    # 生成直接回答
-    if matched_keys:
-        # 去重并保持顺序
-        seen = set()
-        unique_keys = [k for k in matched_keys if not (k in seen or seen.add(k))]
+    if wiki_content and wiki_content != "暂无相关信息":
+        # 构建直接回答
+        reply_templates = [
+            "{{content}} 还有什么想了解的可以直接问我呀～",
+            "{{content}} 😊",
+            "哈哈，{{content}}",
+        ]
         
-        # 取最相关的1-2条信息
-        answers = [PERSONA_INFO.get(k, "") for k in unique_keys[:2] if k in PERSONA_INFO]
+        # 简化内容，去除 Markdown 标题标记，使其更适合对话
+        simplified = wiki_content.replace('# ', '').replace('## ', '').replace('### ', '')
+        simplified = simplified.replace('**', '').replace('*', '')
+        # 限制长度
+        if len(simplified) > 300:
+            simplified = simplified[:300] + "..."
         
-        if answers:
-            combined = " ".join(answers)
-            template = random.choice(REPLY_TEMPLATES["个人信息"])
-            reply_text = template.format(answer=combined)
-            
-            return {{
-                "found": True,
-                "reply_text": reply_text,  # 直接可用的回复
-                "matched_topics": unique_keys[:2],
-                "query": query
-            }}
+        template = random.choice(reply_templates)
+        reply_text = template.format(content=simplified.strip())
+        
+        return {{
+            "found": True,
+            "reply_text": reply_text,  # 直接可用的回复
+            "wiki_content": wiki_content,
+            "query": query
+        }}
     
     # 默认回复 - 不知道也要友好
     fallback = [
@@ -225,8 +301,6 @@ def query_schedule(time_range: str):
     
     不要说"我查了一下日程"，直接说"我这周三上午有空"
     """
-    import random
-    
     # 模拟日程数据
     schedules = {{
         "今天": {{"busy": ["14:00-15:00 有个会"], "free": "上午和晚上"}},
@@ -255,8 +329,7 @@ def query_schedule(time_range: str):
         else:
             schedule_desc = f"{{time_range}}比较空，{{free_desc}}都行～"
         
-        template = random.choice(REPLY_TEMPLATES["日程"])
-        reply_text = template.format(schedule_desc=schedule_desc)
+        reply_text = f"我看了一下，{{schedule_desc}} 你要约哪个时间段呀～"
         
         return {{
             "queried": True,
@@ -276,9 +349,12 @@ def handoff():
     """
     转人工
     """
-    import random
+    reply_texts = [
+        "这个问题比较重要，我直接转给{name}本人回复你哈～",
+        "这个得让{name}亲自回你，已经通知她/他啦～",
+    ]
     
-    reply_text = random.choice(REPLY_TEMPLATES["转人工"])
+    reply_text = random.choice(reply_texts)
     
     return {{
         "handoff": True,

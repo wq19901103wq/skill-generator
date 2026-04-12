@@ -1,7 +1,7 @@
 # 项目进度快照
 
-> 最后更新: 2025年4月9日  
-> 版本: v2.0 - 智能模式  
+> 最后更新: 2025年4月12日  
+> 版本: v3.0 - Karpathy Style Wiki  
 > 状态: ✅ 已完成并推送到 GitHub
 
 ---
@@ -220,6 +220,14 @@ cp -r ~/.openclaw/workspace/skill-generator /目标路径
 ---
 
 ## 📝 变更日志
+
+### v3.0 (2025-04-12) - Karpathy Style Wiki
+- ✅ **真正的 Karpathy Style 知识库** - data/wiki/*.md
+- ✅ 移除硬编码 Python 字典，改用 Markdown 文件
+- ✅ AI 直接读取 Markdown，无需 RAG
+- ✅ 自动生成 7 个 Wiki 文件（基本介绍、工作经验等）
+- ✅ 更新 tool.py 读取 Markdown 文件
+- ✅ 更新 SKILL.md 文档说明
 
 ### v2.0 (2025-04-09)
 - ✅ 添加智能模式 `--smart`

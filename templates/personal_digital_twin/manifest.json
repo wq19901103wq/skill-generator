@@ -1,7 +1,7 @@
 {
   "name": "personal_digital_twin",
   "description": "个人数字分身 Skill - 响应用户@，发送文件，查询信息",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "author": "OpenClaw Skill Generator",
   "defaults": {
     "personality_desc": "热情随意",
@@ -38,7 +38,8 @@
   "directories": [
     "data/documents",
     "data/memory",
-    "data/persona"
+    "data/persona",
+    "data/wiki"
   ],
   "files": {
     "SKILL.md": "SKILL.md.template",

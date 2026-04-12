@@ -282,6 +282,9 @@ class SkillGenerator:
         # 复制源文件到 data/documents（用于参考）
         self._copy_source_files(skill_path, config.get('_source_files', []))
         
+        # 生成 Karpathy Style Wiki 文件
+        self._generate_wiki_files(skill_path, config)
+        
         return str(skill_path)
     
     def _merge_config(self, defaults: Dict, user_config: Dict) -> Dict:
@@ -304,6 +307,7 @@ class SkillGenerator:
             skill_path / "scripts",
             skill_path / "data" / "documents",
             skill_path / "data" / "memory",
+            skill_path / "data" / "wiki",  # Karpathy Style 知识库目录
         ]
         
         # 添加模板自定义目录
@@ -362,6 +366,274 @@ class SkillGenerator:
             if path.exists():
                 dest = doc_dir / path.name
                 shutil.copy2(path, dest)
+    
+    def _generate_wiki_files(self, skill_path: Path, config: Dict):
+        """
+        生成 Karpathy Style Markdown 知识库文件
+        
+        将提取的 persona_info 写入 data/wiki/*.md 文件
+        这是真正的 Karpathy Style - Markdown 文件作为知识库，无需 RAG
+        """
+        wiki_dir = skill_path / "data" / "wiki"
+        wiki_dir.mkdir(parents=True, exist_ok=True)
+        
+        name = config.get('name', '助手')
+        
+        # 定义要生成的 wiki 文件
+        wiki_files = {
+            '基本介绍.md': self._generate_wiki_basic_intro(config, name),
+            '工作经验.md': self._generate_wiki_work_experience(config, name),
+            '教育背景.md': self._generate_wiki_education(config, name),
+            '专业技能.md': self._generate_wiki_skills(config, name),
+            '性格特点.md': self._generate_wiki_personality(config, name),
+            '兴趣爱好.md': self._generate_wiki_interests(config, name),
+            '联系方式.md': self._generate_wiki_contact(config, name),
+        }
+        
+        # 写入文件
+        for filename, content in wiki_files.items():
+            if content:  # 只写入有内容的文件
+                file_path = wiki_dir / filename
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+        
+        # 生成索引文件
+        index_content = self._generate_wiki_index(config, name)
+        with open(wiki_dir / '_index.md', 'w', encoding='utf-8') as f:
+            f.write(index_content)
+        
+        print(f"   📚 生成 Wiki 知识库: {wiki_dir} ({len([c for c in wiki_files.values() if c])} 个文件)")
+    
+    def _generate_wiki_basic_intro(self, config: Dict, name: str) -> str:
+        """生成基本介绍 wiki 文件"""
+        title = config.get('title', '')
+        company = config.get('company', '')
+        description = config.get('description', '')
+        
+        content = f"""# 基本介绍
+
+## {name}
+"""
+        if title:
+            content += f"\n**职位**: {title}"
+        if company:
+            content += f"\n**公司**: {company}"
+        
+        content += f"\n\n## 简介\n\n"
+        
+        if description:
+            content += description
+        else:
+            content += f"我是{name}"
+            if title:
+                content += f"，{title}"
+            if company:
+                content += f"，目前在{company}工作"
+            content += "。"
+        
+        # 添加关键要点
+        key_points = config.get('key_points', [])
+        if key_points:
+            content += "\n\n## 关键要点\n\n"
+            for point in key_points[:5]:
+                content += f"- {point}\n"
+        
+        content += "\n"
+        return content
+    
+    def _generate_wiki_work_experience(self, config: Dict, name: str) -> str:
+        """生成工作经验 wiki 文件"""
+        work_exp = config.get('work_experience', '')
+        structured_data = config.get('structured_data', {})
+        
+        # 尝试从 structured_data 获取工作经历
+        experiences = structured_data.get('work_experience', []) if isinstance(structured_data, dict) else []
+        
+        if not work_exp and not experiences:
+            return ""
+        
+        content = f"""# 工作经验
+
+## 工作经历
+
+"""
+        if experiences:
+            for exp in experiences:
+                if isinstance(exp, dict):
+                    company = exp.get('company', '')
+                    title = exp.get('title', '')
+                    period = exp.get('period', '')
+                    desc = exp.get('description', '')
+                    
+                    if company or title:
+                        content += f"### {title or '职位'}"
+                        if company:
+                            content += f" @ {company}"
+                        content += "\n"
+                        if period:
+                            content += f"**时间**: {period}\n\n"
+                        if desc:
+                            content += f"{desc}\n\n"
+        elif work_exp:
+            content += f"{work_exp}\n\n"
+        
+        return content
+    
+    def _generate_wiki_education(self, config: Dict, name: str) -> str:
+        """生成教育背景 wiki 文件"""
+        education = config.get('education', '')
+        structured_data = config.get('structured_data', {})
+        
+        educations = structured_data.get('education', []) if isinstance(structured_data, dict) else []
+        
+        if not education and not educations:
+            return ""
+        
+        content = "# 教育背景\n\n"
+        
+        if educations:
+            for edu in educations:
+                if isinstance(edu, dict):
+                    school = edu.get('school', '')
+                    degree = edu.get('degree', '')
+                    major = edu.get('major', '')
+                    period = edu.get('period', '')
+                    
+                    if school:
+                        content += f"## {school}\n\n"
+                        if degree:
+                            content += f"**学位**: {degree}\n\n"
+                        if major:
+                            content += f"**专业**: {major}\n\n"
+                        if period:
+                            content += f"**时间**: {period}\n\n"
+        elif education:
+            content += f"{education}\n\n"
+        
+        return content
+    
+    def _generate_wiki_skills(self, config: Dict, name: str) -> str:
+        """生成专业技能 wiki 文件"""
+        skills = config.get('skills', '')
+        structured_data = config.get('structured_data', {})
+        
+        skill_list = structured_data.get('skills', []) if isinstance(structured_data, dict) else []
+        
+        if not skills and not skill_list:
+            return ""
+        
+        content = "# 专业技能\n\n"
+        
+        if skill_list:
+            content += "## 技能列表\n\n"
+            for skill in skill_list:
+                if isinstance(skill, dict):
+                    name_skill = skill.get('name', '')
+                    level = skill.get('level', '')
+                    desc = skill.get('description', '')
+                    if name_skill:
+                        content += f"- **{name_skill}**"
+                        if level:
+                            content += f" ({level})"
+                        if desc:
+                            content += f": {desc}"
+                        content += "\n"
+                elif isinstance(skill, str):
+                    content += f"- {skill}\n"
+        elif skills:
+            content += f"{skills}\n"
+        
+        content += "\n"
+        return content
+    
+    def _generate_wiki_personality(self, config: Dict, name: str) -> str:
+        """生成性格特点 wiki 文件"""
+        personality = config.get('personality', '')
+        tone_style = config.get('tone_style', {})
+        
+        if not personality and not tone_style:
+            return ""
+        
+        content = f"""# 性格特点
+
+## 性格描述
+
+"""
+        if personality:
+            content += f"{personality}\n\n"
+        
+        # 添加说话风格分析
+        if tone_style and isinstance(tone_style, dict):
+            content += "## 说话风格\n\n"
+            
+            common_phrases = tone_style.get('common_phrases', [])
+            if common_phrases:
+                content += "### 常用语\n\n"
+                for phrase in common_phrases[:10]:
+                    content += f"- \"{phrase}\"\n"
+                content += "\n"
+            
+            emojis = tone_style.get('emojis', [])
+            if emojis:
+                content += f"**常用表情**: {' '.join(emojis[:10])}\n\n"
+            
+            avg_length = tone_style.get('avg_message_length')
+            if avg_length:
+                content += f"**平均消息长度**: {avg_length:.0f} 字\n\n"
+        
+        return content
+    
+    def _generate_wiki_interests(self, config: Dict, name: str) -> str:
+        """生成兴趣爱好 wiki 文件"""
+        interests = config.get('interests', '')
+        
+        if not interests:
+            return ""
+        
+        return f"""# 兴趣爱好
+
+{interests}
+
+"""
+    
+    def _generate_wiki_contact(self, config: Dict, name: str) -> str:
+        """生成联系方式 wiki 文件"""
+        contact = config.get('contact', '')
+        
+        if not contact:
+            return ""
+        
+        return f"""# 联系方式
+
+{contact}
+
+"""
+    
+    def _generate_wiki_index(self, config: Dict, name: str) -> str:
+        """生成 Wiki 索引文件"""
+        content = f"""# {name} - 知识库索引
+
+这是一个 Karpathy Style 知识库 - 使用 Markdown 文件组织信息，无需 RAG。
+
+## 文件结构
+
+- [基本介绍](./基本介绍.md) - 基本信息和简介
+- [工作经验](./工作经验.md) - 工作经历和项目经验
+- [教育背景](./教育背景.md) - 教育经历
+- [专业技能](./专业技能.md) - 技能和专长
+- [性格特点](./性格特点.md) - 性格和说话风格
+- [兴趣爱好](./兴趣爱好.md) - 个人兴趣
+- [联系方式](./联系方式.md) - 联系信息
+
+## 使用方式
+
+AI 助手直接读取这些 Markdown 文件来获取关于 {name} 的信息。
+
+---
+
+*由 Skill Generator 自动生成*
+"""
+        return content
     
     def _prepare_render_vars(self, config: Dict) -> Dict:
         """准备渲染变量"""

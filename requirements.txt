@@ -1,0 +1,13 @@
+# Skill Generator 依赖
+
+# 核心依赖（必须）
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+
+# 开发依赖（可选，用于测试和代码检查）
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# LLM 依赖（根据使用的后端选择安装）
+# openai>=1.0.0
+# anthropic>=0.8.0

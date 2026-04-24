@@ -9,10 +9,13 @@
 | 文档 | 适合人群 | 内容 |
 |------|---------|------|
 | [../README.md](../README.md) | 所有用户 | 项目简介、快速开始 |
+| [AI_QUICKSTART.md](./AI_QUICKSTART.md) | ⭐ AI Agent / 开发者 | **5分钟上手**、模块速查表、关键禁忌 |
+| [MODULE_INDEX.md](./MODULE_INDEX.md) | 开发者 | **按问题查文件**（出错了直接定位） |
 | [API.md](./API.md) | 开发者 | 编程接口参考 |
 | [TEMPLATE_GUIDE.md](./TEMPLATE_GUIDE.md) | 模板作者 | 如何创建自定义模板 |
 | [WIKI_GUIDE.md](./WIKI_GUIDE.md) | Skill 用户 | 如何编辑 Wiki 知识库 |
 | [FAQ.md](./FAQ.md) | 所有用户 | 常见问题解答 |
+| [LESSONS_LEARNED.md](./LESSONS_LEARNED.md) | 贡献者 | 踩坑记录，避免重复踩坑 |
 | [../PROJECT_MAP.md](../PROJECT_MAP.md) | 贡献者 | 项目架构和路线图 |
 | [../PROGRESS.md](../PROGRESS.md) | 关注者 | 项目进度和变更记录 |
 
